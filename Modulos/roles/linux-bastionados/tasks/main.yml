@@ -1,0 +1,222 @@
+---
+- name: Checking permission /tmp
+  ansible.builtin.file:
+    path: "/tmp"
+    owner: "root"
+    group: "root"
+    mode: '1777'
+
+- name: Disabling SELinux
+  ansible.posix.selinux:
+          state: disabled
+  register: selinuxdisabled
+
+- name: Print the changes in Configurtion file 
+  ansible.builtin.command: grep SELINUX /etc/sysconfig/selinux
+  register: sevalue
+
+- name: Wait for 5 Second and Reboot 
+  shell: "sleep 5 && reboot"
+  async: 1
+  poll: 0
+  when: selinuxdisabled is changed
+
+- name: Waiting for Server to come back after reboot
+  ansible.builtin.wait_for_connection:
+    delay: 30
+    timeout: 300
+
+- name: Check SELinux Status
+  shell: getenforce
+
+- name: Copy Bastionado Package
+  ansible.builtin.unarchive:
+    src: "/repo/mediafiles/linux/RH8.tar"
+    dest: /tmp/
+
+- name: Executing Kerberos Script
+  command: /usr/bin/sh "/tmp/RH8/hardening/Scripts de Bastionado/Kerberos_Authentication_v4.sh"
+  register: kerberos
+  args:
+    stdin: |
+      y
+      y
+      {{acronym}}
+      y
+      y
+      y
+      y
+      y
+      admin
+      {{ansible_password}}
+      admin
+      {{ansible_password}}
+      y
+  
+- name: Start System Security Services Daemon
+  ansible.builtin.service:
+    name: sssd
+    state: started
+
+- name: Start Service oddjobd
+  ansible.builtin.service:
+    name: oddjobd
+    state: started
+
+- name: Configuring PAM/SSHD to use SSSD on RHEL
+  shell: authselect select sssd with-mkhomedir --force
+
+- name: Enable Service oddjobd
+  shell: systemctl enable --now oddjobd.service
+
+- name: Restart System Security Services Daemon
+  ansible.builtin.service:
+    name: sssd
+    state: restarted
+
+- name: Restart Service oddjobd
+  ansible.builtin.service:
+    name: oddjobd
+    state: restarted
+
+- name: Hardening Script
+  command: /usr/bin/sh "/tmp/RH8/hardening/Scripts de Bastionado/Hardening_v3-RHEL7.sh"
+  register: hardening
+  failed_when: >
+    ("No such file or directory" in hardening.stdout) or
+    (hardening.rc == 1) or
+    (hardening.rc == 2)
+  args:
+    stdin: |
+      y
+      y
+      y
+      n
+      y
+      
+- name: Restart Service oddjobd
+  ansible.builtin.service:
+    name: sshd
+    state: restarted
+
+- name: Add Chrony pool
+  ansible.builtin.lineinfile:
+    path: /etc/chrony.conf
+    insertafter: 'pool 2.rhel.pool.ntp.org iburst'
+    line: pool dominio.net
+    create: yes
+
+- name: Remove Red Hat Chrony pool
+  ansible.builtin.lineinfile:
+    path: /etc/chrony.conf
+    line: pool 2.rhel.pool.ntp.org iburst
+    state: absent
+
+- name: Restart Service oddjobd
+  ansible.builtin.service:
+    name: chronyd
+    state: restarted
+
+- name: Turning "set-ntp" on
+  command: /usr/bin/timedatectl set-ntp true
+
+- name: Change PermitRootLogin
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: '^\s*PermitRootLogin yes.*$'
+    line: 'PermitRootLogin no'
+
+- name: Uncomment and Change ClientAliveCountMax
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: '^#\s*ClientAliveCountMax 3.*$'
+    line: 'ClientAliveCountMax 10'
+
+- name: Uncomment and Change ClientAliveInterval
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: '^#\s*ClientAliveInterval 0.*$'
+    line: 'ClientAliveInterval 600'
+
+- name: X11Forwarding
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: X11Forwarding yes
+    state: absent
+
+- name: Add localusers
+  command: groupadd localusers
+
+- name: Modify issue file
+  shell: |
+      cat <<EOF > /etc/issue
+      Mensagem.
+      EOF
+
+- name: Modify issue.net file
+  shell: |
+      cat <<EOF > /etc/issue.net
+      Mensagem.
+      EOF
+
+- name: Modify motd file
+  shell: |
+      cat <<EOF > /etc/motd
+      Mensagem.
+      EOF
+
+- name: History Timestamps
+  become: true
+  become_method: sudo
+  shell: echo 'export HISTTIMEFORMAT="%d/%m/%y %T "' >> /etc/bashrc
+
+- name: Source bashrc
+  become: true
+  become_method: sudo
+  shell: source /etc/bashrc
+
+- name: Restart Network Manager Service
+  ansible.builtin.service:
+    name: NetworkManager
+    state: restarted
+
+- name: Add Kernel Configuration
+  ansible.builtin.lineinfile:
+    path: /etc/sysctl.conf
+    line: kernel.randomize_va_space = 2
+    create: yes
+
+- name: Remove Link Simbolico
+  ansible.builtin.file:
+    state: absent
+    path: /usr/lib/systemd/system/ctrl-alt-del.target
+
+- name: Modify FSTAB /home
+  lineinfile:
+    dest: /etc/fstab
+    regexp: '^\s*/dev/mapper/rootvg-home /home                   ext4    defaults        1 2.*$'
+    line: '/dev/mapper/rootvg-home /home                   ext4    nosuid        1 2'
+
+- name: Modify FSTAB /tmp
+  lineinfile:
+    dest: /etc/fstab
+    regexp: '^\s*/dev/mapper/rootvg-tmp  /tmp                    ext4    defaults        1 2.*$'
+    line: '/dev/mapper/rootvg-tmp  /tmp                    ext4    nosuid,noexec,nodev        1 2'
+
+- name: Umask Configuration profile
+  ansible.builtin.lineinfile:
+    path: /etc/profile
+    line: umask 077
+    create: yes
+
+- name: Umask Configuration bashrc
+  ansible.builtin.lineinfile:
+    path: /etc/bashrc
+    line: umask 077
+    create: yes
+
+- name: Verifica Everis Script
+  command: /usr/bin/sh "/tmp/RH8/hardening/Scripts de Verificación/Red Hat/Script_VerificaSeguridad_v4.8_Red_hat_8.sh"
+  register: verificasec
+  failed_when: >
+    (verificasec.rc == 0)

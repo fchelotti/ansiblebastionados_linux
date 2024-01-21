@@ -1,0 +1,5 @@
+ansible_password: "{{ ansible_passwd }}"
+root_password: "{{ root_passwd }}"
+domain: "{{ domainResult }}"
+vmname: "{{ vm_name }}"
+organization_unit: "{{ OrganizationUnit }}"

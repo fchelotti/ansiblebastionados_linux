@@ -1,0 +1,1270 @@
+#!/bin/bash
+
+# -- DEFINICIÓN DE VARIABLES GLOBALES
+
+export LANG=en_US.UTF-8
+
+hostname=$(hostname)
+uptimeDays=$(uptime | awk -F'( |,|:)+' '{print $6}')
+OSstring=$(cat /etc/redhat-release)
+OSversion=`echo $OSstring | grep -o -E '[0-9]+' | head -1 | sed -e 's/^0\+//'`
+
+ltmNorthIP_1=10.112.235.4
+ltmNorthIP_2=10.112.235.5
+
+ltmSouthIP_1=10.104.3.21
+ltmSouthIP_2=10.104.3.22
+
+dusIP_1=192.168.200.64
+dusIP_2=192.168.200.65
+
+brgerIP_1=192.168.201.1
+brgerIP_2=192.168.201.2
+
+
+ltmNorthFQDN_1=dcltmm000001.dominio.net
+ltmNorthFQDN_2=dcltmm000002.dominio.net
+
+ltmSouthFQDN_1=dcltms000001.dominio.net
+ltmSouthFQDN_2=dcltms000002.dominio.net
+
+dusFQDN_1=dus-001.com
+dusFQDN_2=dus-002.com
+
+brgerFQDN_1=brger001.corp
+brgerFQDN_2=brger001.corp
+
+# -- PING TEST A LOS DCs LTM
+pingTestLTM() {
+  echo -e "\e[44mPrueba de ping al dominio LTM ...\e[0m"
+  if [ $cpd_id == "N" ]; then
+    ping -c 1 $ltmNorthIP_1
+    ping -c 1 $ltmNorthIP_2
+  else
+    ping -c 1 $ltmSouthIP_1
+    ping -c 1 $ltmSouthIP_2
+  fi
+}
+
+# -- PING TEST AL DOMINIOM DUS
+pingTestDUS() {
+  echo -e "\e[44mPrueba de ping al dominio DUS ...\e[0m"
+  ping -c 1 $dusIP_1
+  ping -c 1 $dusIP_2
+}
+
+# -- PING TEST AL DOMINIO BRGER
+pingTestBRGER() {
+  echo -e "\e[44mPrueba de ping al dominio BRGER ...\e[0m"
+  ping -c 1 $brgerIP_1
+  ping -c 1 $brgerIP_2
+}
+
+# -- PING TEST, A LOS DCS DE LAS ENTIDADES Y LTM
+pingTest() {
+  echo -e "\e[44mPrueba de ping a los DCs locales ...\e[0m"
+  ping -c 1 $first_kdc
+  ping -c 1 $second_kdc
+
+  pingTestLTM
+}
+
+# -- FUNCIÓN AUXILIAR PARA CARGAR LA CONFIGURACIÓN DE SSSD
+loadSSSDFile() {
+echo "[sssd]
+debug_level = 3
+config_file_version = 2
+domains = $domain_name_lowercase, dominio.net
+services = nss, pam, pac, ssh
+
+[domain/$domain_name_lowercase]
+ad_maximum_machine_account_password_age = 0
+ad_gpo_access_control = disabled
+ad_server = $first_kdc_fqdn, $second_kdc_fqdn
+ad_domain = $domain_name_lowercase
+krb5_realm = $domain_name_uppercase
+realmd_tags = manages-system joined-with-samba
+cache_credentials = True
+id_provider = ad
+krb5_store_password_if_offline = True
+default_shell = /bin/bash
+ldap_id_mapping = True
+use_fully_qualified_names = True
+fallback_homedir = /home/%u@%d
+access_provider = ad" > /etc/sssd/sssd.conf
+
+if [ $cpd_id = "N" ]; then
+echo "
+[domain/dominio.net]
+ad_maximum_machine_account_password_age = 0
+ad_gpo_access_control = disabled
+ad_server = $ltmNorthFQDN_1, $ltmNorthFQDN_2
+ad_domain = dominio.net
+krb5_realm = dominio.net
+realmd_tags = manages-system joined-with-samba
+cache_credentials = True
+id_provider = ad
+krb5_store_password_if_offline = True
+default_shell = /bin/bash
+ldap_id_mapping = True
+use_fully_qualified_names = True
+fallback_homedir = /home/%u@%d
+access_provider = ad" >> /etc/sssd/sssd.conf
+else
+echo "
+[domain/dominio.net]
+ad_maximum_machine_account_password_age = 0
+ad_gpo_access_control = disabled
+ad_server = $ltmSouthFQDN_1, $ltmSouthFQDN_2
+ad_domain = dominio.net
+krb5_realm = dominio.net
+realmd_tags = manages-system joined-with-samba
+cache_credentials = True
+id_provider = ad
+krb5_store_password_if_offline = True
+default_shell = /bin/bash
+ldap_id_mapping = True
+use_fully_qualified_names = True
+fallback_homedir = /home/%u@%d
+access_provider = ad" >> /etc/sssd/sssd.conf
+fi
+}
+
+# -- FUNCIÓN AUXILIAR PARA CARGAR LA CONFIGURACIÓN DE SSSD, SOLO CON LTM
+loadSSSDLTMFile() {
+echo "[sssd]
+debug_level = 3
+config_file_version = 2
+domains = dominio.net
+services = nss, pam, pac, ssh" > /etc/sssd/sssd.conf
+
+if [ $cpd_id = "N" ]; then
+echo "
+[domain/dominio.net]
+ad_maximum_machine_account_password_age = 0
+ad_gpo_access_control = disabled
+ad_server = $ltmNorthFQDN_1, $ltmNorthFQDN_2
+ad_domain = dominio.net
+krb5_realm = dominio.net
+realmd_tags = manages-system joined-with-samba
+cache_credentials = True
+id_provider = ad
+krb5_store_password_if_offline = True
+default_shell = /bin/bash
+ldap_id_mapping = True
+use_fully_qualified_names = True
+fallback_homedir = /home/%u@%d
+access_provider = ad" >> /etc/sssd/sssd.conf
+else
+echo "
+[domain/dominio.net]
+ad_maximum_machine_account_password_age = 0
+ad_gpo_access_control = disabled
+ad_server = $ltmSouthFQDN_1, $ltmSouthFQDN_2
+ad_domain = dominio.net
+krb5_realm = dominio.net
+realmd_tags = manages-system joined-with-samba
+cache_credentials = True
+id_provider = ad
+krb5_store_password_if_offline = True
+default_shell = /bin/bash
+ldap_id_mapping = True
+use_fully_qualified_names = True
+fallback_homedir = /home/%u@%d
+access_provider = ad" >> /etc/sssd/sssd.conf
+fi
+}
+
+# -- FUNCIÓN AUXILIAR PARA CARGAR LA CONFIGURACIÓN DE SSSD, SOLO CON DUS
+loadSSSDDUSFile() {
+echo "[sssd]
+debug_level = 3
+config_file_version = 2
+domains = DUS-001.com
+services = nss, pam
+timeout = 300
+
+[domain/DUS-001.com]
+ad_maximum_machine_account_password_age = 0
+ad_domain = DUS-001.com
+krb5_realm = DUS-001.COM
+realmd_tags = manages-system joined-with-samba
+cache_credentials = True
+id_provider = ad
+krb5_store_password_if_offline = True
+default_shell = /bin/bash
+ldap_id_mapping = True
+use_fully_qualified_names = True
+fallback_homedir = /home/%u@%d
+access_provider = ad" > /etc/sssd/sssd.conf
+}
+
+# -- FUNCIÓN AUXILIAR PARA CARGAR LA CONFIGURACIÓN DE SSSD, SOLO CON BRGER
+loadSSSDBRGERFile() {
+echo "[sssd]
+debug_level = 3
+config_file_version = 2
+domains = BRGER001.CORP
+services = nss, pam
+timeout = 300
+
+[domain/BRGER001.CORP]
+ad_maximum_machine_account_password_age = 0
+ad_domain = BRGER001.CORP
+krb5_realm = BRGER001.CORP
+realmd_tags = manages-system joined-with-samba
+cache_credentials = True
+id_provider = ad
+krb5_store_password_if_offline = True
+default_shell = /bin/bash
+ldap_id_mapping = True
+use_fully_qualified_names = True
+fallback_homedir = /home/%u@%d
+access_provider = ad" > /etc/sssd/sssd.conf
+}
+
+# -- FUNCIÓN PARA CARGAR INFORMACIÓN DE LOS HOSTS DE LTM
+modifyLTMHostsFile() {
+  if [ $cpd_id == "N" ]; then
+    echo "# LTM Hostnames" >> /etc/hosts
+    echo "$ltmNorthIP_1 $ltmNorthFQDN_1" >> /etc/hosts
+    echo "$ltmNorthIP_2 $ltmNorthFQDN_2" >> /etc/hosts
+  else
+    echo "# LTM Hostnames" >> /etc/hosts
+    echo "$ltmSouthIP_1 $ltmSouthFQDN_1" >> /etc/hosts
+    echo "$ltmSouthIP_2 $ltmSouthFQDN_2" >> /etc/hosts
+  fi
+}
+
+# -- FUNCIÓN PARA CARGAR INFORMACIÓN DE LOS HOSTS DE BRGER
+modifyDUSHostsFile() {
+  echo "# Entorno de gestion everis de Miami" >> /etc/hosts
+  echo "$dusIP_1 $dusFQDN_1" >> /etc/hosts
+  echo "$dusIP_2 $dusFQDN_2" >> /etc/hosts
+}
+
+# -- FUNCIÓN PARA CARGAR INFORMACIÓN DE LOS HOSTS DE DUS
+modifyBRGERHostsFile() {
+  echo "# Entorno de gestion everis de Sao Paulo" >> /etc/hosts
+  echo "$brgerIP_1 $brgerFQDN_1" >> /etc/hosts
+  echo "$brgerIP_2 $brgerFQDN_2" >> /etc/hosts
+}
+
+# -- FUNCIÓN AUXILIAR PARA CARGAR LOS HOSTS AL FICHERO
+modifyHostsFile() {
+  echo "#Local Domain Controllers Hostnames" >> /etc/hosts
+  echo "$first_kdc $first_kdc_fqdn" >> /etc/hosts
+  echo "$second_kdc $second_kdc_fqdn" >> /etc/hosts
+
+  modifyLTMHostsFile
+}
+
+# -- FUNCIÓN AUXILIAR PARA MODIFICAR EL FICHERO /ETC/RESOLV.CONF (GENERICA)
+modifyResolvFile() {
+  if [ $cpd_id == "N" ]; then
+echo "domain $domain_name_lowercase
+search $domain_name_lowercase dominio.net
+nameserver $first_kdc
+nameserver $second_kdc
+nameserver $ltmNorthIP_1
+nameserver $ltmNorthIP_2
+options attempts:1
+options timeout:1
+" >> /etc/resolv.conf
+  else
+echo "domain $domain_name_lowercase
+search $domain_name_lowercase dominio.net
+nameserver $first_kdc
+nameserver $second_kdc
+nameserver $ltmSouthIP_1
+nameserver $ltmSouthIP_2
+options attempts:1
+options timeout:1
+" >> /etc/resolv.conf
+  fi
+}
+
+# -- FUNCIÓN AUXILIAR PARA MODIFICAR EL FICHERO /ETC/RESOLV.CONF (LTM)
+modifyResolvLTMFile() {
+  if [ $cpd_id == "N" ]; then
+echo "domain dominio.net
+search dominio.net
+nameserver $ltmNorthIP_1
+nameserver $ltmNorthIP_2
+options attempts:1
+options timeout:1
+" >> /etc/resolv.conf
+  else
+echo "domain dominio.net
+search dominio.net
+nameserver $ltmSouthIP_1
+nameserver $ltmSouthIP_2
+options attempts:1
+options timeout:1
+" >> /etc/resolv.conf
+  fi
+}
+
+# -- FUNCIÓN AUXILIAR PARA MODIFICAR EL FICHERO /ETC/RESOLV.CONF (DUS)
+modifyResolvDUSFile() {
+echo "domain dus-001.com
+search dus-001.com
+nameserver $dusIP_1
+nameserver $dusIP_2
+options attempts:1
+options timeout:1" >> /etc/resolv.conf
+}
+
+# -- FUNCIÓN AUXILIAR PARA MODIFICAR EL FICHERO /ETC/RESOLV.CONF (BRGER)
+modifyResolvBRGERFile() {
+echo "domain brger001.corp
+search brger001.corp
+nameserver $brgerIP_1
+nameserver $brgerIP_2
+options attempts:1
+options timeout:1" >> /etc/resolv.conf
+}
+
+# -- FUNCIÓN AUXILIAR PARA CARGAR LA CONFIGURACIÓN DE KERBEROS EN EL FICHERO
+loadKerberosFile() {
+if [ $cpd_id = "N" ]; then
+echo "#/etc/krb5.conf
+[logging]
+default = FILE:/var/log/krb5libs.log
+kdc = FILE:/var/log/krb5kdc.log
+admin_server = FILE:/var/log/kadmind.log
+[libdefaults]
+default_realm = $domain_name_uppercase
+dns_lookup_realm = false
+dns_lookup_kdc = false
+forwardable = true
+clockskew = 500
+kdc_timesync = 1
+rdns = false
+[realms]
+$domain_name_uppercase = {
+  kdc = $first_kdc
+  kdc = $second_kdc
+  default_domain = $domain_name_lowercase
+}
+dominio.net = {
+  kdc = $ltmNorthIP_1
+  kdc = $ltmNorthIP_2
+  default_domain = dominio.net
+}
+[domain_realm]
+.$domain_name_lowercase = $domain_name_uppercase
+$domain_name_lowercase = $domain_name_uppercase
+.dominio.net = dominio.net
+dominio.net = dominio.net
+[kdc]
+profile = /var/kerberos/krb5kdc/kdc.conf
+[appdefaults]
+pam = {
+  ignore_k5login = true
+  debug = false
+  ticket_lifetime = 72000
+  renew_lifetime = 72000
+  forwardable = true
+  krb4_convert = false
+}" > /etc/krb5.conf
+
+else
+echo "#/etc/krb5.conf
+[logging]
+default = FILE:/var/log/krb5libs.log
+kdc = FILE:/var/log/krb5kdc.log
+admin_server = FILE:/var/log/kadmind.log
+[libdefaults]
+default_realm = $domain_name_uppercase
+dns_lookup_realm = false
+dns_lookup_kdc = false
+forwardable = true
+clockskew = 500
+kdc_timesync = 1
+rdns = false
+[realms]
+$domain_name_uppercase = {
+  kdc = $first_kdc
+  kdc = $second_kdc
+  default_domain = $domain_name_lowercase
+}
+dominio.net = {
+  kdc = $ltmSouthIP_1
+  kdc = $ltmSouthIP_2
+  default_domain = dominio.net
+}
+dominio.net = {
+  kdc = 10.104.3.19
+  kdc = 10.104.3.20
+  default_domain = dominio.net
+}
+[domain_realm]
+.$domain_name_lowercase = $domain_name_uppercase
+$domain_name_lowercase = $domain_name_uppercase
+.dominio.net = dominio.net
+dominio.net = dominio.net
+.dominio.net = dominio.net
+dominio.net = dominio.net
+[kdc]
+profile = /var/kerberos/krb5kdc/kdc.conf
+[appdefaults]
+pam = {
+  ignore_k5login = true
+  debug = false
+  ticket_lifetime = 72000
+  renew_lifetime = 72000
+  forwardable = true
+  krb4_convert = false
+}" > /etc/krb5.conf
+fi
+}
+
+# -- FUNCIÓN AUXILIAR PARA CARGAR CONFIGURACIÓN KERBEROS SOLO CON LTM
+loadKerberosLTMFile() {
+if [ $cpd_id == "N" ]; then
+echo "#/etc/krb5.conf
+[logging]
+default = FILE:/var/log/krb5libs.log
+kdc = FILE:/var/log/krb5kdc.log
+admin_server = FILE:/var/log/kadmind.log
+[libdefaults]
+default_realm = dominio.net
+dns_lookup_realm = false
+dns_lookup_kdc = false
+forwardable = true
+clockskew = 500
+kdc_timesync = 1
+rdns = false
+[realms]
+dominio.net = {
+  kdc = $ltmNorthIP_1
+  kdc = $ltmNorthIP_2
+  default_domain = dominio.net
+}
+[domain_realm]
+.dominio.net = dominio.net
+dominio.net = dominio.net
+[kdc]
+profile = /var/kerberos/krb5kdc/kdc.conf
+[appdefaults]
+pam = {
+  ignore_k5login = true
+  debug = false
+  ticket_lifetime = 72000
+  renew_lifetime = 72000
+  forwardable = true
+  krb4_convert = false
+}" > /etc/krb5.conf
+else
+
+echo "#/etc/krb5.conf
+[logging]
+default = FILE:/var/log/krb5libs.log
+kdc = FILE:/var/log/krb5kdc.log
+admin_server = FILE:/var/log/kadmind.log
+[libdefaults]
+default_realm = dominio.net
+dns_lookup_realm = false
+dns_lookup_kdc = false
+forwardable = true
+clockskew = 500
+kdc_timesync = 1
+rdns = false
+[realms]
+dominio.net = {
+  kdc = $ltmSouthIP_1
+  kdc = $ltmSouthIP_2
+  default_domain = dominio.net
+}
+[domain_realm]
+.dominio.net = dominio.net
+dominio.net = dominio.net
+[kdc]
+profile = /var/kerberos/krb5kdc/kdc.conf
+[appdefaults]
+pam = {
+  ignore_k5login = true
+  debug = false
+  ticket_lifetime = 72000
+  renew_lifetime = 72000
+  forwardable = true
+  krb4_convert = false
+}" > /etc/krb5.conf
+fi
+}
+
+# -- FUNCIÓN PARA CARGAR LA CONFIGURACIÓN DEL DOMINIO DUS
+loadKerberosDUSFile() {
+echo "[logging]
+ default = FILE:/var/log/krb5libs.log
+ kdc = FILE:/var/log/krb5kdc.log
+ admin_server = FILE:/var/log/kadmind.log
+
+[libdefaults]
+ default_realm = DUS-001.COM
+ dns_lookup_realm = false
+ dns_lookup_kdc = false
+ rdns = false
+ forwardable = true
+ clockskew = 500
+ kdc_timesync = 1
+
+[realms]
+ DUS-001.COM = {
+  kdc = $dusIP_1
+  kdc = $dusIP_2
+  default_domain = dus-001.com
+}
+
+[domain_realm]
+ .dus-001.com = DUS-001.COM
+ dus-001.com = DUS-001.COM
+
+[kdc]
+ profile = /var/kerberos/krb5kdc/kdc.conf
+
+[appdefaults]
+ pam = {
+ debug = false
+ ticket_lifetime = 72000
+ renew_lifetime = 72000
+ forwardable = true
+ ignore_k5login = true
+ krb4_convert = false
+ }
+" > /etc/krb5.conf
+}
+
+# -- FUNCIÓN PARA CARGAR LA CONFIGURACIÓN DEL DOMINIO BRGER
+loadKerberosBRGERFile() {
+echo "[logging]
+ default = FILE:/var/log/krb5libs.log
+ kdc = FILE:/var/log/krb5kdc.log
+ admin_server = FILE:/var/log/kadmind.log
+
+[libdefaults]
+ default_realm = BRGER001.CORP
+ dns_lookup_realm = false
+ dns_lookup_kdc = false
+ rdns = false
+ forwardable = true
+ clockskew = 500
+ kdc_timesync = 1
+
+[realms]
+ BRGER001.CORP = {
+  kdc = $brgerIP_1
+  kdc = $brgerIP_2
+  default_domain = brger001.corp
+}
+
+[domain_realm]
+ .brger001.corp = BRGER001.CORP
+ brger001.corp = BRGER001.CORP
+
+[kdc]
+ profile = /var/kerberos/krb5kdc/kdc.conf
+
+[appdefaults]
+ pam = {
+ debug = false
+ ticket_lifetime = 72000
+ renew_lifetime = 72000
+ forwardable = true
+ ignore_k5login = true
+ krb4_convert = false
+ }
+" > /etc/krb5.conf
+}
+
+# -- FUNCIÓN QUE COMPRUEBA LA ENTIDAD Y SE UNE A LOS DISTINTOS DOMAIN CONTROLLERS
+authenticationFunction() {
+  # -- HACER JOIN A LOS DOMINIOS
+  read -r -p "¿Desea unirse a los dominios LTM y Local de la entidad? [y/N] " respuesta1
+  case "$respuesta1" in
+    [yY][sS]|[yY])
+
+    if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode == "MX" ]; then
+      read -r -p "Introduzca su usuario del dominio LTM: " domainUser
+      read -r -p "Introduzca su password del dominio LTM: " passwdUser
+      echo -e "\e[44mUNIÉNDOSE AL DOMINIO LTM ... \e[0m"
+      echo -n "$passwdUser" |adcli join --domain=dominio.net --login-user=$domainUser --stdin-password --verbose --computer-ou=$domain_OU --host-fqdn=$hostname.dominio.net
+      echo ""
+    elif [ $entityCode == "GM" ]; then
+      read -r -p "Introduzca su usuario del dominio DUS: " domainUser
+      read -r -p "Introduzca su password del dominio LTM: " passwdUser
+      echo -e "\e[44mUNIÉNDOSE AL DOMINIO DUS ... \e[0m"
+      echo -n "$passwdUser" |adcli join --domain=DUS-001.COM --login-user=$domainUser --stdin-password --verbose --host-fqdn=$hostname.dus-001.com
+      echo ""
+    elif [ $entityCode == "GS" ]; then
+      read -r -p "Introduzca su usuario del dominio BRGER: " domainUser
+      read -r -p "Introduzca su password del dominio LTM: " passwdUser
+      echo -e "\e[44mUNIÉNDOSE AL DOMINIO BRGER ... \e[0m"
+      echo -n "$passwdUser" |adcli join --domain=BRGER001.CORP --login-user=$domainUser --stdin-password --verbose --host-fqdn=$hostname.brger001.corp
+      echo ""
+    else
+      read -r -p "Introduzca su usuario del dominio LTM: " domainUser
+      read -r -p "Introduzca su password del dominio LTM: " passwdUser
+      echo -e "\e[44mUNIÉNDOSE AL DOMINIO LTM ... \e[0m"
+      echo -n "$passwdUser" |adcli join --domain=dominio.net --login-user=$domainUser --stdin-password --verbose --computer-ou=$domain_OU --host-fqdn=$hostname.dominio.net
+      echo ""
+
+      read -r -p "Introduzca su usuario del Local dominio: " domainLogin
+      read -r -p "Introduzca su password del dominio LTM: " passwdUser
+      echo -e "\e[44mUNIÉNDOSE AL DOMINIO LOCAL ... \e[0m"
+      echo -n "$passwdUser" |adcli join --domain=$domain_name_uppercase --login-user=$domainLogin  --stdin-password --host-fqdn=$hostname.$domain_name_lowercase --verbose
+    fi
+
+    # Configure authconfig depending on the version and restart the services
+        echo -e "\e[44mEstableciendo métodos de autenticación para acceder al servidor ... \e[0m"
+    if [ $OSversion = '7' ]; then
+        authconfig --enablesssd --enablesssdauth --enablemkhomedir --enablekrb5 --update
+        systemctl enable sssd && systemctl restart dbus && systemctl restart oddjobd && systemctl restart sssd && systemctl restart systemd-logind
+    elif [ $OSversion = '6' ]; then
+        authconfig --enablesssd --enablesssdauth --enablemkhomedir --update
+        service messagebus restart && service oddjobd restart && service sssd restart
+    # SE PUEDE AMPLIAR CON OTRAS VERSIONES ##
+    fi
+
+    # -- COMPRUEBA SI SE PUEDEN RESOLVER USUARIOS REMOTOS
+
+    if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ]  || [ $entityCode == "MX" ]; then
+        id adm-crdavi1@dominio.net
+    elif [ $entityCode == "GM" ]; then
+        id adm-crdavi1@DUS-001.com
+    elif [ $entityCode == "GS" ]; then
+        id adm-crdavi1@BRGER001.CORP
+    else
+        id adm-crdavi1@dominio.net
+        id App-Joindcunix@$domain_name_uppercase
+    fi
+ 
+    ;;
+    *)
+    ;;
+  esac
+}
+
+#------------------------------------------------------------
+
+# -- PING FUNCIÓN GENÉRICA
+pingFunction() {
+  if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode == "MX" ]; then
+    pingTestLTM
+  elif [ $entityCode == "GM" ]; then
+    pingTestDUS
+  elif [ $entityCode == "GS" ]; then
+    pingTestBRGER
+  else
+    pingTest
+  fi
+}
+
+# -- FUNCIÓN PARA CONFIGURAR EL FICHERO /ETC/HOSTS
+hostsConfiguration() {
+  # -- SE AÑADE INFORMACIÓN SOBRE LOS HOSTS EN EL FICHERO /ETC/HOSTS
+  if [ -f /etc/hosts ];
+  then
+    echo -e "\e[41mATENCIÓN: el fichero /etc/hosts tiene la siguiente información ... \e[0m"
+    cat /etc/hosts
+    read -r -p "¿Desea añadir las líneas en referencia a los Directorios Activos? [y/N] " respuesta2
+    case "$respuesta2" in
+      [yY][sS]|[yY])
+      if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode == "MX" ] ; then
+        modifyLTMHostsFile
+      elif [ $entityCode == "GM" ]; then
+        modifyDUSHostsFile
+      elif [ $entityCode == "GS" ]; then
+        modifyBRGERHostsFile
+      else
+        modifyHostsFile
+      fi
+      ;;
+      *)
+      ;;
+    esac
+
+    if (test $# -ne 0)
+    then
+      echo -e "\e[41mHa ocurrido un problema al sobreescribir el fichero /etc/hosts ...\e[0m"
+      echo -e "\e[41mSaliendo...\e[0m"
+      exit
+    fi
+  else
+    read -r -p "El fichero /etc/hosts no existe, ¿desea crearlo con la información de los DCs? [y/N] " respuesta3
+    case "$respuesta3" in
+      [yY][sS]|[yY])
+      if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode = "MX" ] ; then
+        modifyLTMHostsFile
+      elif [ $entityCode == "GM" ]; then
+        modifyDUSHostsFile
+      elif [ $entityCode == "GS" ]; then
+        modifyBRGERHostsFile
+      else
+        modifyHostsFile
+      fi
+      ;;
+      *)
+      ;;
+    esac
+
+    if (test $# -ne 0)
+    then
+      echo -e "\e[41mHa ocurrido un problema al sobreescribir el fichero /etc/hosts ...\e[0m"
+      echo -e "\e[41mSaliendo...\e[0m"
+      exit
+    fi
+  fi
+}
+
+# -- FUNCIÓN PARAR MOSTRAR INFORMACIÓN SOBRE EL FICHERO /ETC/RESOLV.CONF
+resolvConfiguration() {
+  # -- COMPROBAMOS LA INFORMACIÓN DEL FICHERO /ETC/RESOLV.CONF
+  if [ -f /etc/resolv.conf ]; then
+    echo -e "\e[41mATENCIÓN: el fichero /etc/resolv.conf ya existe ... \e[0m"
+    cat /etc/resolv.conf
+    echo -e "\e[41mATENCIÓN: MODIFICAR ESTE FICHERO PUEDE IMPACTAR EN EL SERVICIO ... \e[0m"
+    read -r -p "¿Desea añadir las líneas referentes a los DCs en el fichero /etc/resolv.conf? [y/N] " respuesta4
+    case "$respuesta4" in
+      [yY][sS]|[yY])
+
+      if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode == "MX" ]; then
+        modifyResolvLTMFile
+      elif [ $entityCode == "GM" ]; then
+        modifyResolvDUSFile
+      elif [ $entityCode == "GS" ]; then
+        modifyResolvBRGERFile
+      else
+        modifyResolvFile
+      fi
+
+      ;;
+      *)
+      ;;
+    esac
+  else
+    read -r -p "El fichero /etc/resolv.conf no existe, ¿desea crearlo con la información de los DCs? [y/N] " respuesta5
+    case "$respuesta5" in
+      [yY][sS]|[yY])
+
+      if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode == "MX" ]; then
+        modifyResolvLTMFile
+      elif [ $entityCode == "GM" ]; then
+        modifyResolvDUSFile
+      elif [ $entityCode == "GS" ]; then
+        modifyResolvBRGERFile
+      else
+        modifyResolvFile
+      fi
+
+      ;;
+      *)
+      ;;
+    esac
+
+    if (test $# -ne 0)
+    then
+      echo -e "\e[41mHa ocurrido un problema al sobreescribir el fichero /etc/hosts ...\e[0m"
+      echo -e "\e[41mSaliendo...\e[0m"
+      exit
+    fi
+  fi
+}
+
+# -- FUNCIÓN PARA CONFIGURAR EL FICHERO /ETC/KRB5.CONF
+kerberosConfiguration() {
+  # COMPROBAR SI EL FICHERO /ETC/KRB5.CONF EXISTE Y LLENAR CON INFORMACIÓN DE LOS DCS
+  if [ -f /etc/krb5.conf ];
+  then
+    echo -e "\e[41mATENCIÓN: el fichero /etc/krb5.conf ya existe ... \e[0m"
+    cat /etc/krb5.conf
+    # -- COMPROBAMOS SI EL USUARIO QUIERE SOBREESCRIBIR EL FICHERO
+    read -r -p "¿Desea sobreescribir el fichero /etc/krb5.conf? [y/N] " respuesta6
+    case "$respuesta6" in
+      [yY][sS]|[yY])
+      echo -e "\e[44mSobreescribiendo el fichero /etc/krb5.conf ... \e[0m"
+
+      if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode == "MX" ]; then
+        loadKerberosLTMFile
+      elif [ $entityCode == "GM" ]; then
+        loadKerberosDUSFile
+      elif [ $entityCode == "GS" ]; then
+        loadKerberosBRGERFile
+      else
+        loadKerberosFile
+      fi
+
+      ;;
+      *)
+      ;;
+    esac
+
+    if (test $# -ne 0)
+    then
+      echo -e "\e[41mHa ocurrido un problema al sobreescribir el fichero /etc/krb5.conf ...\e[0m"
+      echo -e "\e[41mSaliendo...\e[0m"
+      exit
+    fi
+  else
+    # -- SI NO EXISTE EL FICHERO, LO CREAMOS E INTRODUCIMOS LA INFORMACIÓN DENTRO
+    read -r -p "El fichero /etc/krb5.conf no existe, ¿desea crearlo y cargar la configuración? [y/N] " respuesta7
+    case "$respuesta7" in
+      [yY][sS]|[yY])
+      echo -e "\e[44mCreando y escribiendo el fichero /etc/krb5.conf ... \e[0m"
+
+      if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode == "MX" ]; then
+        loadKerberosLTMFile
+      elif [ $entityCode == "GM" ]; then
+        loadKerberosDUSFile
+      elif [ $entityCode == "GS" ]; then
+        loadKerberosBRGERFile
+      else
+        loadKerberosFile
+      fi
+
+      ;;
+      *)
+      ;;
+    esac
+
+    if (test $# -ne 0)
+    then
+      echo -e "\e[41mHa ocurrido un problema al escribir el fichero /etc/krb5.conf ...\e[0m"
+      echo -e "\e[41mSaliendo...\e[0m"
+      exit
+    fi
+  fi
+}
+
+# -- FUNCIÓN PARA CONFIGURAR EL FICHERO /ETC/SSSD/SSSD.CONF
+sssdConfiguration() {
+  # -- SE COMPRUEBA QUE EXISTE EL FICHERO /ETC/SSSD/SSSD.CONF Y SE COMPLETA CON LA INFORMACIÓN DE LA ENTIDAD
+  if [ -f /etc/sssd/sssd.conf ]; then
+    read -r -p "¿Desea completar el fichero /etc/sssd/sssd.conf con información de los DCs? [y/N] " respuesta8
+    case "$respuesta8" in
+      [yY][sS]|[yY])
+
+      if [ $entityCode == "SO" ] || [ $entityCode  == "AS" ] || [ $entityCode == "PA" ] || [ $entityCode == "CM" ] || [ $entityCode == "CS" ] || [ $entityCode == "MX" ]; then
+        loadSSSDLTMFile
+      elif [ $entityCode == "GM" ]; then
+        loadSSSD-DUSFile
+      elif [ $entityCode == "GS" ]; then
+        loadSSSD-BRGERFile
+      else
+        loadSSSDFile
+      fi
+
+      ;;
+      *)
+      ;;
+    esac
+
+    if (test $# -ne 0)
+    then
+      echo -e "\e[41mHa ocurrido un problema al escribir el fichero /etc/sssd/sssd.conf ...\e[0m"
+      echo -e "\e[41mSaliendo...\e[0m"
+      exit
+    fi
+  fi
+}
+
+# -- FUNCIÓN PARA CONFIGURAR EL FICHERO SSH Y DESCOMENTAR LAS lÍNEAS DE KERBEROS
+configSSHFunction() {
+  read -r -p "¿Desea modificar el fichero de configuración SSH /etc/ssh/sshd_config? [y/N] " respuesta9
+  case "$respuesta9" in
+    [yY][sS]|[yY])
+    echo -e "\e[44mAplicando cambios al fichero /etc/ssh/sshd_config ... \e[0m"
+    sed -i '/KerberosAuthentication/s/^#//g' /etc/ssh/sshd_config
+    sed -i 's/KerberosAuthentication no/KerberosAuthentication yes/g' /etc/ssh/sshd_config
+    sed -i '/KerberosOrLocalPasswd/s/^#//g' /etc/ssh/sshd_config
+    sed -i '/KerberosTicketCleanup/s/^#//g' /etc/ssh/sshd_config
+
+    service sshd restart
+    ;;
+    *)
+  esac
+}
+
+# -- FUNCIÓN AUXILIAR PARA MOSTRAR INFORMACIÓN DEL OS
+showOSBanner() {
+  # -- BANNER CON SISTEMA OPERATIVO
+  echo -e "\e[44m______________________________________\e[0m"
+
+  echo -e "\e[44mVersión del Sistema Operativo: \e[0m"
+  echo "$OSstring"
+  echo -e "\e[44m______________________________________\e[0m"
+  echo ""
+}
+
+# -- FUNCIÓN AUXILIAR PARA MOSTRAR EL UPTIME DEL SERVIDOR
+showUptime() {
+  # -- BANNER CON UPTIME DEL SERVIDOR
+  echo -e "\e[44mUptime del servidor: \e[0m"
+  uptime
+  if [ "$uptimeDays" -ge 120 ]; then
+    echo -e "\e[41mATENCIÓN: este servidor lleva más de 4 meses sin reiniciarse ...\e[0m"
+    echo -e "\e[41m¡SE RECOMIENDA NO APLICAR CAMBIOS EN ESTE SERVIDOR!\e[0m"
+  fi
+  echo -e "\e[44m______________________________________\e[0m"
+  echo ""
+}
+
+# -- FUNCIÓN AUXILIAR PARA MOSTRAR INFORMACIÓN DE SAMBA
+showSambaInfo() {
+  # -- SI EXISTE, SE MUESTA EL CONTENIDO DEL FICHERO /ETC/SAMBA/SMB.CONF
+  service smb status
+  echo ""
+  if [ -f /etc/samba/smb.conf ]; then
+    echo -e "\e[41mATENCIÓN: el fichero /etc/samba/smb.conf existe y contiene la siguiente información ... \e[0m"
+    echo ""
+    cat /etc/samba/smb.conf
+  fi
+}
+
+# -- FUNCIÓN PARA HACER BACKUP DE LOS FICHEROS CRÍTICOS
+backupFiles() {
+# -- BACKUP DE LOS FICHEROS CRÍTICOS
+  echo -e "\e[44mSe va a realizar un backup de los ficheros críticos ...\e[0m"
+  echo -e "\e[44mLos ficheros se guardarán en el directorio /root/...\e[0m"
+
+  day=`date +%d`
+  month=`date +%m`
+  year=`date +%Y`
+
+  cp /etc/hosts /root/hosts-$year$month$day.bkp
+  cp /etc/resolv.conf /root/resolv.conf-$year$month$day.bkp
+  cp /etc/ssh/sshd_config /root/sshd_config-$year$month$day.bkp
+
+  if [ -f /etc/krb5.conf ]; then
+    cp /etc/krb5.conf /root/krb5.conf-$year$month$day.bkp
+  fi
+
+  if [ -f /etc/sssd/sssd.conf ]; then
+    cp /etc/sssd/sssd.conf /root/sssd.conf-$year$month$day.bkp
+  fi
+
+  echo ""
+}
+
+# -- FUNCIÓN PARA INSTALAR LOS PAQUETES NECESARIOS PARA EL PROCESO
+installPackages() {
+  # -- INSTALACIÓN / ACTUALIZACIÓN DE PAQUETES
+  read -r -p "¿Desea instalar/actualizar los paquetes necesarios para realizar el proceso [y/N] " respuesta10
+  case "$respuesta10" in
+    [yY][sS]|[yY])
+    echo -e "\e[44mPreparando instalación de paquetes... \e[0m"
+    yum clean all
+    echo -e "\e[44mInstalando...\e[0m"
+    yum install sssd krb5-workstation adcli authconfig krb5-libs pam_krb5 oddjob oddjob-mkhomedir
+    ;;
+    *)
+    ;;
+  esac
+
+  if (test $# -ne 0)
+  then
+    echo -e "\e[41mHa ocurrido un error al descargar los paquetes...\e[0m"
+    echo -e "\e[41mSaliendo...\e[0m"
+    exit
+  fi
+  echo ""
+}
+
+# -- FUNCIÓN PARA APLICAR LA PRECONFIGURACIÓN (CREACIÓN DE DIRECTORIOS/FICHEROS...)
+preconfiguration() {
+  # -- PRECONFIGURACIÓN / CREACIÓN DE DIRECTORIOS
+  read -r -p "¿Desea crear y aplicar la pre-configuración inicial? [y/N] " respuesta11
+  case "$respuesta11" in
+    [yY][sS]|[yY])
+    echo -e "\e[44mAplicando preconfiguración, generando directorios ... \e[0m"
+    mkdir -p /etc/krb5.conf.d/
+    mkdir -p /var/kerberos/krb5kdc/
+    mkdir -p /etc/sssd/conf.d/
+    touch /var/kerberos/krb5kdc/kdc.conf
+    touch /etc/sssd/sssd.conf
+    chmod 700 /etc/sssd/sssd.conf
+    chown root:root /etc/sssd/sssd.conf
+    ;;
+    *)
+    ;;
+  esac
+
+  if (test $# -ne 0)
+  then
+    echo -e "\e[41mHa ocurrido un error al aplicar la configuración inicial ...\e[0m"
+    echo -e "\e[41mSaliendo...\e[0m"
+    exit
+  fi
+
+  echo ""
+}
+
+# -- FUNCIÓN PARA ELEGIR ENTIDAD
+chooseEntity() {
+  # -- MOSTANFO INFORMACIÓN DE LAS ENTIDADES
+
+  echo -e "\e[44mCódigos por entidad: \e[0m"
+  echo "Venezuela:	VE (CPD MIAMI)"
+  echo "Perú:		PE (CPD MIAMI)"
+  echo "Puerto Rico:	PR (CPD MIAMI)"
+  echo "Colombia:	CO (CPD MIAMI)"
+  echo "México:		MX (CPD MIAMI)"
+  echo "Asistencia:	AS (CPD MIAMI)"
+  echo "Costa Rica:	CR (CPD MIAMI)"
+  echo "Ecuador:	EC (CPD MIAMI)"
+  echo "Guatemala:	GU (CPD MIAMI)"
+  echo "Honduras:	HN (CPD MIAMI)"
+  echo "Nicaragua:	NI (CPD MIAMI)"
+  echo "Panamá:		PA (CPD MIAMI)"
+  echo "Rep. Dom.:	RP (CPD MIAMI)"
+  echo "Solunion:	SO (CPD MIAMI)"
+  echo "Común App MI:	CM (CPD MIAMI)"
+  echo "Común Gest Mi:  GM (CPD MIAMI)"
+  echo "Argentina:	AR (CPD SAO PAULO)"
+  echo "Brasil:		BR (CPD SAO PAULO)"
+  echo "Uruguay:	UY (CPD SAO PAULO)"
+  echo "Paraguay:	PY (CPD SAO PAULO)"
+  echo "Chile:		CH (CPD SAO PAULO)"
+  echo "Común App SP:	CS (CPP SAO PAULO)"
+  echo "Común Gest SP:  GS (CPD SAO PAULO)"
+  echo ""
+
+  echo -e "\e[44m______________________________________\e[0m"
+  echo -e "\e[44mIntroduce el código de la entidad de este servidor: \e[0m"
+  read entityCode
+
+  case "$entityCode" in
+    VE)
+    domain_OU="OU=VE,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=LA-SEGURIDAD.COM
+    domain_name_lowercase=la-seguridad.com
+    first_kdc=10.176.74.100
+    second_kdc=10.176.74.101
+    first_kdc_fqdn=SVE001001-100.la-seguridad.com
+    second_kdc_fqdn=SVE001001-101.la-seguridad.com
+    cpd_id=N
+    ;;
+    CO)
+    domain_OU="OU=CO,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM
+    domain_name_lowercase=[domain controller].COM
+    first_kdc=10.192.32.218
+    second_kdc=10.192.32.18
+    first_kdc_fqdn=[kdc].[domain controller].COM
+    second_kdc_fqdn=[kdc].[domain controller].COM
+    cpd_id=N
+    ;;
+    PR)
+    domain_OU="OU=PR,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM
+    domain_name_lowercase=[domain controller].COM
+    first_kdc=10.174.65.70
+    second_kdc=10.174.65.72
+    first_kdc_fqdn=[kdc].[domain controller].COM
+    second_kdc_fqdn=[kdc].[domain controller].COM
+    cpd_id=N
+    ;;
+    PE)
+    domain_OU="OU=PE,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM
+    domain_name_lowercase=[domain controller].COM
+    first_kdc=10.160.120.14
+    second_kdc=10.160.120.13
+    first_kdc_fqdn=[kdc].[domain controller].COM
+    second_kdc_fqdn=[kdc].[domain controller].COM
+    cpd_id=N
+    ;;
+    MX)
+    domain_OU="OU=Linux,OU=Servers,OU=MX,OU=ARLTMNorte,DC=ltm,DC=[domain controller],DC=net"
+    cpd_id=N
+    ;;
+    AS)
+    domain_OU="OU=MASIST,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    cpd_id=N
+    ;;
+    CR)
+    domain_OU="OU=CR,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM.CR
+    domain_name_lowercase=[domain controller].COM.CR
+    first_kdc=10.115.30.5
+    second_kdc=""
+    first_kdc_fqdn=[kdc].[domain controller].COM.CR
+    second_kdc_fqdn=""
+    cpd_id=N
+    ;;
+    EC)
+    domain_OU="OU=EC,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=ATLAS.COM.EC
+    domain_name_lowercase=atlas.com.ec
+    first_kdc=10.161.0.21
+    second_kdc=10.161.0.22
+    first_kdc_fqdn=dcserver.atlas.com.ec
+    second_kdc_fqdn=[domain controller].atlas.com.ec
+    cpd_id=N
+    ;;
+    GU)
+    domain_OU="OU=GT,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM.GT
+    domain_name_lowercase=[domain controller].com.gt
+    first_kdc=10.115.10.2
+    second_kdc=""
+    first_kdc_fqdn=[kdc].map[domain controller]fre.com.gt
+    second_kdc_fqdn=""
+    cpd_id=N
+    ;;
+    HN)
+    domain_OU="OU=HN,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM.HN
+    domain_name_lowercase=[domain controller].com.hn
+    first_kdc=10.161.216.3
+    second_kdc=""
+    first_kdc_fqdn=[kdc].[domain controller].com.hn
+    second_kdc_fqdn=""
+    cpd_id=N
+    ;;
+    NI)
+    domain_OU="OU=NI,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM.NI
+    domain_name_lowercase=[domain controller].com.ni
+    first_kdc=10.115.19.2
+    second_kdc=""
+    first_kdc_fqdn=[kdc].[domain controller].com.ni
+    second_kdc_fqdn=""
+    cpd_id=N
+    ;;
+    PA)
+    domain_OU="OU=PA,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    cpd_id=N
+    ;;
+    RP)
+    domain_OU="OU=RP,OU=MI,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM
+    domain_name_lowercase=[domain controller].com
+    first_kdc=10.160.225.163
+    second_kdc=10.160.225.183
+    first_kdc_fqdn=[kdc].[domain controller].com
+    second_kdc_fqdn=[kdc].[domain controller].com
+    cpd_id=N
+    ;;
+    SO)
+    domain_OU="OU=SOL,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    cpd_id=N
+    ;;
+    CM)
+    domain_OU="OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    cpd_id=N
+    ;;
+    GM)
+    ;;
+    AR)
+    domain_OU="OU=AR,OU=SP,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].AR
+    domain_name_lowercase=[domain controller].AR
+    first_kdc=10.223.240.100
+    second_kdc=10.223.240.190
+    first_kdc_fqdn=[kdc].[domain controller].AR
+    second_kdc_fqdn=[kdc].[domain controller].AR
+    cpd_id=S
+    ;;
+    BR)
+    domain_OU="OU=BR,OU=SP,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=NET.[domain controller].COM.BR
+    domain_name_lowercase=net.[domain controller].com.br
+    first_kdc=10.206.64.124
+    second_kdc=10.206.64.137
+    first_kdc_fqdn=[kdc].net.[domain controller].com.br
+    second_kdc_fqdn=[kdc].net.[domain controller].com.br
+    cpd_id=S
+    ;;
+    UY)
+    domain_OU="OU=UY,OU=SP,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].LOCAL
+    domain_name_lowercase=[domain controller].local
+    first_kdc=10.160.212.251
+    second_kdc=10.160.212.250
+    first_kdc_fqdn=[kdc].[domain controller].local
+    second_kdc_fqdn=[kdc].[domain controller].local
+    cpd_id=S
+    ;;
+    PY)
+    domain_OU="OU=PY,OU=SP,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=[domain controller].COM.PY
+    domain_name_lowercase=[domain controller].com.py
+    first_kdc=10.162.2.141
+    second_kdc=10.162.2.137
+    first_kdc_fqdn=[kdc].[domain controller].com.py
+    second_kdc_fqdn=[kdc].[domain controller].com.py
+    cpd_id=S
+    ;;
+    CH)
+    domain_OU="OU=CH,OU=SP,OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    domain_name_uppercase=DCL003.LOCAL
+    domain_name_lowercase=dcl003.local
+    first_kdc=10.208.100.50
+    second_kdc=10.208.100.51
+    first_kdc_fqdn=[kdc].dcl003.local
+    second_kdc_fqdn=[kdc].dcl003.local
+    cpd_id=S
+    ;;
+    CS)
+    domain_OU="OU=Servidores,OU=SSCC,DC=ltm,DC=[domain controller],DC=net"
+    cpd_id=S
+    ;;
+    GS)
+    ;;
+    *)
+    echo -e "\e[41mERROR, entidad desconocida...\e[0m"
+    echo -e "\e[41mSaliendo...\e[0m"
+    ;;
+  esac
+}
+
+## ------- COMIENZO DEL PROGRAMA -------##
+## -------------------------------------##
+## -------------------------------------##
+## -------------------------------------##
+## -------------------------------------##
+## -------------------------------------##
+## -------------------------------------##
+
+
+echo "██╗  ██╗███████╗██████╗ ██████╗ ███████╗██████╗  ██████╗ ███████╗     █████╗ ██╗   ██╗████████╗██╗  ██╗
+██║ ██╔╝██╔════╝██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔═══██╗██╔════╝    ██╔══██╗██║   ██║╚══██╔══╝██║  ██║
+█████╔╝ █████╗  ██████╔╝██████╔╝█████╗  ██████╔╝██║   ██║███████╗    ███████║██║   ██║   ██║   ███████║
+██╔═██╗ ██╔══╝  ██╔══██╗██╔══██╗██╔══╝  ██╔══██╗██║   ██║╚════██║    ██╔══██║██║   ██║   ██║   ██╔══██║
+██║  ██╗███████╗██║  ██║██████╔╝███████╗██║  ██║╚██████╔╝███████║    ██║  ██║╚██████╔╝   ██║   ██║  ██║
+╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝    ╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝"
+
+# Mostramos el banner
+showOSBanner
+# Mostramos Uptime
+showUptime
+# Se hace backup de los ficheros
+backupFiles
+# Mostramos información sobre Samba (Servicio Crítico)
+showSambaInfo
+# Instalamos los paquetes necesarios para llevar a cabo el proceso
+installPackages
+# Creamos directorios, ficheros necesarios
+preconfiguration
+# Elegimos la entidad a la que pertenece el servidor
+chooseEntity
+
+# Hacemos una prueba de ping
+pingFunction
+# Se realiza la configuración de Kerberos
+kerberosConfiguration
+# Se modifica el fichero con hostnames
+hostsConfiguration
+# Se modifica el fichero con información de los DNS
+resolvConfiguration
+# Se realiza la configuración de SSSD
+sssdConfiguration
+# Se lleva a cabo la configuración de autenticación
+authenticationFunction
+# Se configura el servicio SSH para permitir a los usuarios de Kerberos
+configSSHFunction
+
+## ------- FIN DEL PROGRAMA -------##
+echo -e "\e[44m ---------- FINALIZANDO SCRIPT DE AUTENTICACIÓN KERBEROS ---------- \e[0m"

@@ -1,0 +1,7 @@
+---
+- name: Bastionados Linux
+  hosts: linux
+  become: true
+  roles:
+    - role: linux-bastionados
+    - role: Regionais/{{ countries }}
